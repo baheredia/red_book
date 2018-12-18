@@ -53,7 +53,12 @@ object Chapter8 {
     def check: Either[(FailedCase, SuccessCount), SuccessCount]
 
     def &&(p: Prop): Prop = new Prop {
-      def check: Boolean = this.check && p.check
+      def check: Either[(FailedCase, SuccessCount), SuccessCount] = (this.check, p.check) match {
+        case (Left((f1, nSuc1)), Left((f2, nSuc2))) => Left((f1 + f2, nSuc1 + nSuc2))
+        case (Left((f, nSuc1)), Right(succ)) => Left((f, nSuc1 + succ))
+        case (Right(nSuc1), Left((f, nSuc2))) => Left((f, nSuc1 + nSuc2))
+        case (Right(nSuc1), Right(nSuc2)) => Right(nSuc1 + nSuc2)
+      }
     }
 
   }
