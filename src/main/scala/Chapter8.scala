@@ -1,6 +1,7 @@
 import Chapter6.RNG.{intBetween, nonNegativeLessThan}
 import Chapter6.{RNG, Rand, State}
 import Chapter8.Gen.choose
+import Chapter8.Prop
 import Chapter8.Prop.{FailedCase, SuccessCount}
 
 object Chapter8 {
@@ -66,16 +67,37 @@ object Chapter8 {
 
   }
 
-  trait Prop {
+  type TestCases = Int
 
-    def check: Either[(FailedCase, SuccessCount), SuccessCount]
+  sealed trait Result {
+    def isFalsified: Boolean
+  }
 
-    def &&(p: Prop): Prop = new Prop {
-      def check: Either[(FailedCase, SuccessCount), SuccessCount] = (this.check, p.check) match {
-        case (Left((f1, nSuc1)), Left((f2, nSuc2))) => Left((f1 + f2, nSuc1 + nSuc2))
-        case (Left((f, nSuc1)), Right(succ)) => Left((f, nSuc1 + succ))
-        case (Right(nSuc1), Left((f, nSuc2))) => Left((f, nSuc1 + nSuc2))
-        case (Right(nSuc1), Right(nSuc2)) => Right(nSuc1 + nSuc2)
+  case object Passed extends Result {
+    def isFalsified: Boolean = false
+  }
+
+  case class Falsified(failure: FailedCase, successes: SuccessCount) extends Result {
+    def isFalsified: Boolean = true
+  }
+
+  case class Prop(run: (TestCases, RNG) => Result) {
+
+    def &&(p: Prop): Prop = Prop { (n, rng) =>
+      (run(n, rng), p.run(n, rng)) match {
+        case (Passed, Passed) => Passed
+        case (Passed, Falsified(f2, n2)) => Falsified(f2, n2 + n)
+        case (Falsified(f1, n1), Passed) => Falsified(f1, n1 + n)
+        case (Falsified(f1, n1), Falsified(f2, n2)) => Falsified(f1 + f2, n1 + n2)
+      }
+    }
+
+    def ||(p: Prop): Prop = Prop { (n, rng) =>
+      (run(n, rng), p.run(n, rng)) match {
+        case (Passed, Passed) => Passed
+        case (Passed, Falsified(f2, n2)) => Passed
+        case (Falsified(f1, n1), Passed) => Passed
+        case (Falsified(f1, n1), Falsified(f2, n2)) => Falsified(f1 + f2, n1 + n2)
       }
     }
 
@@ -86,7 +108,22 @@ object Chapter8 {
     type FailedCase = String
     type SuccessCount = Int
 
-    def forAll[A](a: Gen[A])(f: A => Boolean): Prop = ???
+    def forAll[A](as: Gen[A])(f: A => Boolean): Prop = Prop {
+      (n, rng) =>
+        randomStream(as)(rng).zip(Chapter5.Stream.from(0)).take(n).map {
+          case (a, i) => try {
+            if (f(a)) Passed else Falsified(a.toString, i)
+          } catch { case e: Exception => Falsified(buildMsg(a, e), i) }
+        }.find(_.isFalsified).getOrElse(Passed)
+    }
+
+    def randomStream[A](g: Gen[A])(rng: RNG): Chapter5.Stream[A] =
+      Chapter5.Stream.unfold(rng)(rng => Some(g.sample.run(rng)))
+
+    def buildMsg[A](s: A, e: Exception): String =
+      s"test case: $s\n" +
+      s"generated an exception: ${e.getMessage}\n" +
+      s"stack trace:\n ${e.getStackTrace.mkString("\n")}"
 
   }
 
